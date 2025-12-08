@@ -634,12 +634,6 @@ impl Exchange {
                 .into_iter()
                 .collect(),
             ExchangeEvents::MakerOrderFilled(e) => {
-                // Get account address before borrowing perpetual mutably
-                let account_address = self
-                    .accounts
-                    .get(&e.accountId.to::<types::AccountId>())
-                    .map(|a| a.address())
-                    .unwrap_or(Address::ZERO);
                 chain!(
                     if let Some((perp, order)) = self.order(e.perpId, e.orderId)? {
                         let fill_price = perp.price_converter().from_unsigned(e.pricePNS);
@@ -652,7 +646,6 @@ impl Exchange {
                                 let new_size = order.size() - fill_size;
                                 perp.update_order(
                                     order.updated(instant, ctx, None, Some(new_size), None),
-                                    account_address,
                                 )
                                 .expect("order exists");
                                 StateEvents::order(
@@ -872,12 +865,6 @@ impl Exchange {
             .collect(),
             ExchangeEvents::OrderChanged(e) => {
                 let c = must_ctx()?;
-                // Get account address before borrowing perpetual mutably
-                let account_address = self
-                    .accounts
-                    .get(&c.account_id)
-                    .map(|a| a.address())
-                    .unwrap_or(Address::ZERO);
                 chain!(
                     if let Some(perp) = self.perpetuals.get_mut(&c.perpetual_id) {
                         let order_id = c.order_id.unwrap_or_default();
@@ -911,7 +898,7 @@ impl Exchange {
                             size_update,
                             expiry_block_update,
                         );
-                        perp.update_order(updated, account_address)?;
+                        perp.update_order(updated)?;
                         Some(StateEvents::order(
                             perp,
                             &order,
@@ -956,12 +943,6 @@ impl Exchange {
             ExchangeEvents::OrderForwardingUpdated(_) => vec![],    // Ignored
             ExchangeEvents::OrderPlaced(e) => {
                 let c = must_ctx()?;
-                // Get account address before borrowing perpetual mutably
-                let account_address = self
-                    .accounts
-                    .get(&c.account_id)
-                    .map(|a| a.address())
-                    .unwrap_or(Address::ZERO);
                 chain!(
                     if let Some(perp) = self.perpetuals.get_mut(&c.perpetual_id) {
                         let order = Order::placed(
@@ -982,7 +963,7 @@ impl Exchange {
                             fill_or_kill: order.fill_or_kill().unwrap_or_default(),
                             immediate_or_cancel: order.immediate_or_cancel().unwrap_or_default(),
                         };
-                        perp.add_order(order, account_address);
+                        perp.add_order(order);
                         Some(StateEvents::order(perp, &order, ctx, event))
                     } else {
                         None
