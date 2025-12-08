@@ -353,23 +353,19 @@ impl Perpetual {
         }
     }
 
-    pub(crate) fn add_order(&mut self, order: Order, account_address: alloy::primitives::Address) {
-        self.l2_book.add_order(&order, account_address);
+    pub(crate) fn add_order(&mut self, order: Order) {
+        self.l2_book.add_order(&order);
         self.orders.insert(order.order_id(), order);
     }
 
-    pub(crate) fn update_order(
-        &mut self,
-        order: Order,
-        account_address: alloy::primitives::Address,
-    ) -> Result<(), DexError> {
+    pub(crate) fn update_order(&mut self, order: Order) -> Result<(), DexError> {
         match self.orders.entry(order.order_id()) {
             Entry::Occupied(mut e) => {
                 let prev = e.get();
                 if prev.price() != order.price() {
                     // Price changed: remove from old level, add to new level
                     self.l2_book.remove_order(prev);
-                    self.l2_book.add_order(&order, account_address);
+                    self.l2_book.add_order(&order);
                 } else {
                     // Same price: just update the order in place
                     self.l2_book.update_order(&order, prev);
