@@ -180,33 +180,19 @@ impl L2Book {
             });
         }
 
-        // Get or create the level
+        // Get or create the level and capture tail before inserting
         let side = order.r#type().side();
-        let level = match side {
-            types::OrderSide::Ask => self.asks.entry(order.price()).or_default(),
-            types::OrderSide::Bid => self.bids.entry(Reverse(order.price())).or_default(),
-        };
+        let old_tail = self.get_or_create_level_mut(side, order.price()).tail();
 
         // Create the L3Order with prev pointing to current tail
         let mut l3_order = L3Order::new(*order);
-        l3_order.set_prev(level.tail());
+        l3_order.set_prev(old_tail);
 
         // Insert into slotmap
         let slot = self.orders.insert(l3_order);
 
-        // Update old tail's next pointer
-        if let Some(old_tail) = level.tail()
-            && let Some(old_tail_order) = self.orders.get_mut(old_tail)
-        {
-            old_tail_order.set_next(Some(slot));
-        }
-
-        // Update level head/tail
-        if level.head().is_none() {
-            level.set_head(Some(slot));
-        }
-        level.set_tail(Some(slot));
-        level.add_size(order.size());
+        // Link at tail
+        self.link_at_tail(side, order.price(), old_tail, slot, order.size());
 
         // Update reverse index
         self.order_index.insert(order.order_id(), slot);
@@ -251,12 +237,7 @@ impl L2Book {
         l3_order.update_order(*order);
 
         // Update level cached size
-        let level = match side {
-            types::OrderSide::Ask => self.asks.get_mut(&price),
-            types::OrderSide::Bid => self.bids.get_mut(&Reverse(price)),
-        };
-
-        if let Some(level) = level {
+        if let Some(level) = self.get_level_mut(side, price) {
             level.update_size(old_size, order.size());
         }
 
@@ -290,62 +271,26 @@ impl L2Book {
         let size = l3_order.size();
         let side = l3_order.r#type().side();
 
-        // Update prev's next pointer
-        if let Some(prev) = prev_slot
-            && let Some(prev_order) = self.orders.get_mut(prev)
-        {
-            prev_order.set_next(next_slot);
-        }
+        // Unlink from list
+        self.unlink_node(prev_slot, next_slot);
 
-        // Update next's prev pointer
-        if let Some(next) = next_slot
-            && let Some(next_order) = self.orders.get_mut(next)
-        {
-            next_order.set_prev(prev_slot);
-        }
-
-        // Update level head/tail
-        let should_remove_level = match side {
-            types::OrderSide::Ask => {
-                if let Some(level) = self.asks.get_mut(&price) {
-                    if level.head() == Some(slot) {
-                        level.set_head(next_slot);
-                    }
-                    if level.tail() == Some(slot) {
-                        level.set_tail(prev_slot);
-                    }
-                    level.sub_size(size);
-                    level.is_empty()
-                } else {
-                    false
-                }
+        // Update level head/tail and check if empty
+        let should_remove_level = if let Some(level) = self.get_level_mut(side, price) {
+            if level.head() == Some(slot) {
+                level.set_head(next_slot);
             }
-            types::OrderSide::Bid => {
-                if let Some(level) = self.bids.get_mut(&Reverse(price)) {
-                    if level.head() == Some(slot) {
-                        level.set_head(next_slot);
-                    }
-                    if level.tail() == Some(slot) {
-                        level.set_tail(prev_slot);
-                    }
-                    level.sub_size(size);
-                    level.is_empty()
-                } else {
-                    false
-                }
+            if level.tail() == Some(slot) {
+                level.set_tail(prev_slot);
             }
+            level.sub_size(size);
+            level.is_empty()
+        } else {
+            false
         };
 
         // Prune empty level
         if should_remove_level {
-            match side {
-                types::OrderSide::Ask => {
-                    self.asks.remove(&price);
-                }
-                types::OrderSide::Bid => {
-                    self.bids.remove(&Reverse(price));
-                }
-            }
+            self.remove_level(side, price);
         }
 
         // Remove from slotmap and return the order
@@ -384,60 +329,37 @@ impl L2Book {
         let side = l3_order.r#type().side();
 
         // If already at tail, just update the order data
-        let level = match side {
-            types::OrderSide::Ask => self.asks.get(&price),
-            types::OrderSide::Bid => self.bids.get(&Reverse(price)),
-        };
-
-        if level.is_some_and(|l| l.tail() == Some(slot)) {
+        if self
+            .get_level(side, price)
+            .is_some_and(|l| l.tail() == Some(slot))
+        {
             // Already at back, just update order data
             if let Some(l3_order) = self.orders.get_mut(slot) {
                 l3_order.update_order(*order);
             }
-            let level = match side {
-                types::OrderSide::Ask => self.asks.get_mut(&price),
-                types::OrderSide::Bid => self.bids.get_mut(&Reverse(price)),
-            };
-            if let Some(level) = level {
+            if let Some(level) = self.get_level_mut(side, price) {
                 level.update_size(old_size, order.size());
             }
             return Ok(());
         }
 
         // Unlink from current position
-        // Update prev's next
-        if let Some(prev) = prev_slot
-            && let Some(prev_order) = self.orders.get_mut(prev)
-        {
-            prev_order.set_next(next_slot);
-        }
+        self.unlink_node(prev_slot, next_slot);
 
-        // Update next's prev
-        if let Some(next) = next_slot
-            && let Some(next_order) = self.orders.get_mut(next)
-        {
-            next_order.set_prev(prev_slot);
-        }
-
-        // Update level head if we were the head
-        let level = match side {
-            types::OrderSide::Ask => self.asks.get_mut(&price),
-            types::OrderSide::Bid => self.bids.get_mut(&Reverse(price)),
-        };
-
-        if let Some(level) = level {
+        // Update level head if we were the head, then link at tail
+        if let Some(level) = self.get_level_mut(side, price) {
             if level.head() == Some(slot) {
                 level.set_head(next_slot);
             }
 
-            // Link at tail
+            // Get old tail before updating
             let old_tail = level.tail();
 
-            // Update old tail's next
-            if let Some(old_tail_slot) = old_tail
-                && let Some(old_tail_order) = self.orders.get_mut(old_tail_slot)
-            {
-                old_tail_order.set_next(Some(slot));
+            // Update old tail's next pointer
+            if let Some(old_tail_slot) = old_tail {
+                if let Some(old_tail_order) = self.orders.get_mut(old_tail_slot) {
+                    old_tail_order.set_next(Some(slot));
+                }
             }
 
             // Update this order's links and data
@@ -447,9 +369,11 @@ impl L2Book {
                 l3_order.update_order(*order);
             }
 
-            // Update level tail and size
-            level.set_tail(Some(slot));
-            level.update_size(old_size, order.size());
+            // Update level tail and size - need to re-borrow
+            if let Some(level) = self.get_level_mut(side, price) {
+                level.set_tail(Some(slot));
+                level.update_size(old_size, order.size());
+            }
         }
 
         Ok(())
@@ -552,6 +476,87 @@ impl L2Book {
         }
 
         Ok(())
+    }
+
+    // === Linked list helpers ===
+
+    /// Get a level by side and price (immutable).
+    fn get_level(&self, side: types::OrderSide, price: UD64) -> Option<&L3Level> {
+        match side {
+            types::OrderSide::Ask => self.asks.get(&price),
+            types::OrderSide::Bid => self.bids.get(&Reverse(price)),
+        }
+    }
+
+    /// Get a level by side and price (mutable).
+    fn get_level_mut(&mut self, side: types::OrderSide, price: UD64) -> Option<&mut L3Level> {
+        match side {
+            types::OrderSide::Ask => self.asks.get_mut(&price),
+            types::OrderSide::Bid => self.bids.get_mut(&Reverse(price)),
+        }
+    }
+
+    /// Get or create a level by side and price.
+    fn get_or_create_level_mut(&mut self, side: types::OrderSide, price: UD64) -> &mut L3Level {
+        match side {
+            types::OrderSide::Ask => self.asks.entry(price).or_default(),
+            types::OrderSide::Bid => self.bids.entry(Reverse(price)).or_default(),
+        }
+    }
+
+    /// Remove a level by side and price.
+    fn remove_level(&mut self, side: types::OrderSide, price: UD64) {
+        match side {
+            types::OrderSide::Ask => {
+                self.asks.remove(&price);
+            }
+            types::OrderSide::Bid => {
+                self.bids.remove(&Reverse(price));
+            }
+        }
+    }
+
+    /// Unlink a node from the doubly-linked list by updating its neighbors.
+    fn unlink_node(&mut self, prev_slot: Option<OrderSlot>, next_slot: Option<OrderSlot>) {
+        // Update prev's next pointer
+        if let Some(prev) = prev_slot {
+            if let Some(prev_order) = self.orders.get_mut(prev) {
+                prev_order.set_next(next_slot);
+            }
+        }
+
+        // Update next's prev pointer
+        if let Some(next) = next_slot {
+            if let Some(next_order) = self.orders.get_mut(next) {
+                next_order.set_prev(prev_slot);
+            }
+        }
+    }
+
+    /// Link a new slot at the tail of a level.
+    /// Takes old_tail to avoid borrowing level while mutating orders.
+    fn link_at_tail(
+        &mut self,
+        side: types::OrderSide,
+        price: UD64,
+        old_tail: Option<OrderSlot>,
+        slot: OrderSlot,
+        size: UD64,
+    ) {
+        // Update old tail's next pointer
+        if let Some(old_tail_slot) = old_tail {
+            if let Some(old_tail_order) = self.orders.get_mut(old_tail_slot) {
+                old_tail_order.set_next(Some(slot));
+            }
+        }
+
+        // Update level head/tail (re-borrow level after updating orders)
+        let level = self.get_or_create_level_mut(side, price);
+        if level.head().is_none() {
+            level.set_head(Some(slot));
+        }
+        level.set_tail(Some(slot));
+        level.add_size(size);
     }
 
     fn impact<'a>(
