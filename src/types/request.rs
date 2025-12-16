@@ -154,6 +154,16 @@ impl From<u8> for RequestType {
     }
 }
 
+impl RequestType {
+    /// Returns the order side for this request type.
+    ///
+    /// Only valid for order-placing request types (OpenLong, OpenShort, CloseLong, CloseShort).
+    /// Panics for Cancel, IncreasePositionCollateral, and Change.
+    pub fn side(&self) -> OrderSide {
+        OrderType::from(*self).side()
+    }
+}
+
 impl From<RequestType> for OrderType {
     fn from(value: RequestType) -> Self {
         match value {

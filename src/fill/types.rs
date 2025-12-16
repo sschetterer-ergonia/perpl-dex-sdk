@@ -4,7 +4,7 @@ use alloy::primitives::TxHash;
 use fastnum::UD64;
 use tokio::sync::mpsc;
 
-use crate::types;
+use crate::types::{self, OrderSide};
 
 /// A matched trade between a taker and maker.
 ///
@@ -41,6 +41,9 @@ pub struct Trade {
 
     /// Taker account ID.
     pub taker_account_id: types::AccountId,
+
+    /// Taker side (Bid = buying, Ask = selling).
+    pub taker_side: OrderSide,
 
     /// Taker fee paid (normalized decimal, in collateral token).
     pub taker_fee: UD64,

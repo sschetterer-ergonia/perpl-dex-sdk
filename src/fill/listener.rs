@@ -10,7 +10,9 @@ use super::types::{BlockTrades, Trade, TradeReceiver};
 use crate::{
     abi::dex::Exchange::{ExchangeEvents, ExchangeInstance, MakerOrderFilled},
     error::DexError,
-    num, stream, types, Chain,
+    num, stream,
+    types::{self, OrderSide, RequestType},
+    Chain,
 };
 
 /// Default channel buffer size.
@@ -33,6 +35,7 @@ struct PerpetualConverters {
 /// Context for tracking order requests (reuses pattern from exchange.rs).
 struct OrderContext {
     account_id: types::AccountId,
+    side: OrderSide,
 }
 
 /// Pending maker fill waiting for taker match.
@@ -94,8 +97,10 @@ impl TradeProcessor {
     fn process_event(&mut self, event: &stream::RawEvent) -> Option<Trade> {
         match event.event() {
             ExchangeEvents::OrderRequest(e) => {
+                let request_type: RequestType = e.orderType.into();
                 self.order_context = Some(OrderContext {
                     account_id: e.accountId.to(),
+                    side: request_type.side(),
                 });
                 None
             }
@@ -148,6 +153,7 @@ impl TradeProcessor {
             maker_order_id: maker.maker_order_id,
             maker_fee: maker.maker_fee,
             taker_account_id: ctx.account_id,
+            taker_side: ctx.side,
             taker_fee: self.config.collateral_converter.from_unsigned(e.feeCNS),
         })
     }
