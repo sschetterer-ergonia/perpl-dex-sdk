@@ -237,9 +237,10 @@ impl OrderBook {
         l3_order.update_order(*order);
 
         // Update level cached size
-        if let Some(level) = self.get_level_mut(side, price) {
-            level.update_size(old_size, order.size());
-        }
+        let level = self
+            .get_level_mut(side, price)
+            .ok_or(OrderBookError::LevelNotFound { price, side })?;
+        level.update_size(old_size, order.size());
 
         Ok(())
     }
@@ -275,18 +276,17 @@ impl OrderBook {
         self.unlink_node(prev_slot, next_slot);
 
         // Update level head/tail and check if empty
-        let should_remove_level = if let Some(level) = self.get_level_mut(side, price) {
-            if level.head() == Some(slot) {
-                level.set_head(next_slot);
-            }
-            if level.tail() == Some(slot) {
-                level.set_tail(prev_slot);
-            }
-            level.sub_size(size);
-            level.is_empty()
-        } else {
-            false
-        };
+        let level = self
+            .get_level_mut(side, price)
+            .ok_or(OrderBookError::LevelNotFound { price, side })?;
+        if level.head() == Some(slot) {
+            level.set_head(next_slot);
+        }
+        if level.tail() == Some(slot) {
+            level.set_tail(prev_slot);
+        }
+        level.sub_size(size);
+        let should_remove_level = level.is_empty();
 
         // Prune empty level
         if should_remove_level {
@@ -329,52 +329,58 @@ impl OrderBook {
         let side = l3_order.r#type().side();
 
         // If already at tail, just update the order data
-        if self
+        let is_at_tail = self
             .get_level(side, price)
-            .is_some_and(|l| l.tail() == Some(slot))
-        {
+            .ok_or(OrderBookError::LevelNotFound { price, side })?
+            .tail()
+            == Some(slot);
+
+        if is_at_tail {
             // Already at back, just update order data
             if let Some(l3_order) = self.orders.get_mut(slot) {
                 l3_order.update_order(*order);
             }
-            if let Some(level) = self.get_level_mut(side, price) {
-                level.update_size(old_size, order.size());
-            }
+            let level = self
+                .get_level_mut(side, price)
+                .ok_or(OrderBookError::LevelNotFound { price, side })?;
+            level.update_size(old_size, order.size());
             return Ok(());
         }
 
         // Unlink from current position
         self.unlink_node(prev_slot, next_slot);
 
-        // Update level head if we were the head, then link at tail
-        if let Some(level) = self.get_level_mut(side, price) {
-            if level.head() == Some(slot) {
-                level.set_head(next_slot);
-            }
+        // Update level head if we were the head
+        let level = self
+            .get_level_mut(side, price)
+            .ok_or(OrderBookError::LevelNotFound { price, side })?;
+        if level.head() == Some(slot) {
+            level.set_head(next_slot);
+        }
 
-            // Get old tail before updating
-            let old_tail = level.tail();
+        // Get old tail before updating
+        let old_tail = level.tail();
 
-            // Update old tail's next pointer
-            if let Some(old_tail_slot) = old_tail {
-                if let Some(old_tail_order) = self.orders.get_mut(old_tail_slot) {
-                    old_tail_order.set_next(Some(slot));
-                }
-            }
-
-            // Update this order's links and data
-            if let Some(l3_order) = self.orders.get_mut(slot) {
-                l3_order.set_prev(old_tail);
-                l3_order.set_next(None);
-                l3_order.update_order(*order);
-            }
-
-            // Update level tail and size - need to re-borrow
-            if let Some(level) = self.get_level_mut(side, price) {
-                level.set_tail(Some(slot));
-                level.update_size(old_size, order.size());
+        // Update old tail's next pointer
+        if let Some(old_tail_slot) = old_tail {
+            if let Some(old_tail_order) = self.orders.get_mut(old_tail_slot) {
+                old_tail_order.set_next(Some(slot));
             }
         }
+
+        // Update this order's links and data
+        if let Some(l3_order) = self.orders.get_mut(slot) {
+            l3_order.set_prev(old_tail);
+            l3_order.set_next(None);
+            l3_order.update_order(*order);
+        }
+
+        // Update level tail and size - need to re-borrow
+        let level = self
+            .get_level_mut(side, price)
+            .ok_or(OrderBookError::LevelNotFound { price, side })?;
+        level.set_tail(Some(slot));
+        level.update_size(old_size, order.size());
 
         Ok(())
     }
@@ -514,6 +520,12 @@ impl OrderBook {
                 self.bids.remove(&Reverse(price));
             }
         }
+    }
+
+    /// Force remove a level (for testing state inconsistency handling).
+    #[cfg(test)]
+    pub(crate) fn force_remove_level(&mut self, side: types::OrderSide, price: UD64) {
+        self.remove_level(side, price);
     }
 
     /// Unlink a node from the doubly-linked list by updating its neighbors.

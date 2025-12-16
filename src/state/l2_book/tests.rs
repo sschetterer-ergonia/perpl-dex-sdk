@@ -933,3 +933,64 @@ fn move_nonexistent_order() {
     let result = book.move_to_back(&order, &order);
     assert!(matches!(result, Err(OrderBookError::OrderNotFound { order_id: 99 })));
 }
+
+// ============================================================================
+// STATE INCONSISTENCY TESTS (LevelNotFound)
+// ============================================================================
+
+#[test]
+fn level_not_found_on_update_order() {
+    // Simulate state inconsistency: order exists but level was removed
+    let mut book = OrderBook::new();
+    let order = ask!(100, 1.0, 1, 1, 1);
+    book.add_order(&order).unwrap();
+
+    // Force remove the level (simulating corruption)
+    book.force_remove_level(types::OrderSide::Ask, udec64!(100));
+
+    // Try to update the order - should fail with LevelNotFound
+    let updated = order.with_size(udec64!(0.5));
+    let result = book.update_order(&updated, &order);
+    assert!(matches!(
+        result,
+        Err(OrderBookError::LevelNotFound { price, side })
+        if price == udec64!(100) && side == types::OrderSide::Ask
+    ));
+}
+
+#[test]
+fn level_not_found_on_remove_order() {
+    let mut book = OrderBook::new();
+    let order = ask!(100, 1.0, 1, 1, 1);
+    book.add_order(&order).unwrap();
+
+    // Force remove the level
+    book.force_remove_level(types::OrderSide::Ask, udec64!(100));
+
+    // Try to remove the order - should fail with LevelNotFound
+    let result = book.remove_order_by_id(1);
+    assert!(matches!(
+        result,
+        Err(OrderBookError::LevelNotFound { price, side })
+        if price == udec64!(100) && side == types::OrderSide::Ask
+    ));
+}
+
+#[test]
+fn level_not_found_on_move_to_back() {
+    let mut book = OrderBook::new();
+    let order = ask!(100, 1.0, 1, 1, 1);
+    book.add_order(&order).unwrap();
+
+    // Force remove the level
+    book.force_remove_level(types::OrderSide::Ask, udec64!(100));
+
+    // Try to move to back - should fail with LevelNotFound
+    let updated = order.with_size(udec64!(1.5));
+    let result = book.move_to_back(&updated, &order);
+    assert!(matches!(
+        result,
+        Err(OrderBookError::LevelNotFound { price, side })
+        if price == udec64!(100) && side == types::OrderSide::Ask
+    ));
+}

@@ -41,6 +41,10 @@ pub enum OrderBookError {
     /// Order has zero price.
     #[error("order {order_id} has invalid price: {price}")]
     InvalidOrderPrice { order_id: OrderId, price: UD64 },
+
+    /// Expected price level not found. This indicates internal inconsistency.
+    #[error("level not found at price {price} ({side:?} side)")]
+    LevelNotFound { price: UD64, side: OrderSide },
 }
 
 /// Result type for OrderBook operations.
