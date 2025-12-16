@@ -42,5 +42,5 @@
 mod listener;
 mod types;
 
-pub use listener::{start, NormalizationConfig, TradeProcessor};
+pub use listener::{NormalizationConfig, TradeProcessor, start};
 pub use types::{BlockTrades, Trade, TradeReceiver};

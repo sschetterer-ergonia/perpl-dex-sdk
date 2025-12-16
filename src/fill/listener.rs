@@ -8,11 +8,11 @@ use tokio::sync::mpsc;
 
 use super::types::{BlockTrades, Trade, TradeReceiver};
 use crate::{
+    Chain,
     abi::dex::Exchange::{ExchangeEvents, ExchangeInstance, MakerOrderFilled},
     error::DexError,
     num, stream,
     types::{self, OrderSide, RequestType},
-    Chain,
 };
 
 /// Default channel buffer size.
@@ -229,9 +229,10 @@ where
     let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
 
     let chain_clone = chain.clone();
-    let handle = tokio::spawn(async move {
-        run_listener(chain_clone, provider, from, sleep, config, tx).await
-    });
+    let handle =
+        tokio::spawn(
+            async move { run_listener(chain_clone, provider, from, sleep, config, tx).await },
+        );
 
     Ok((TradeReceiver::new(rx), handle))
 }

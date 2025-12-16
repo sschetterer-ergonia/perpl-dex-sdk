@@ -9,7 +9,7 @@ use alloy::{
     rpc::client::RpcClient,
     transports::layers::RetryBackoffLayer,
 };
-use dex_sdk::{fill, types::StateInstant, Chain};
+use dex_sdk::{Chain, fill, types::StateInstant};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
