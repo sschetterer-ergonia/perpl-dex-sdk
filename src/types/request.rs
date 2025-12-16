@@ -155,12 +155,16 @@ impl From<u8> for RequestType {
 }
 
 impl RequestType {
-    /// Returns the order side for this request type.
+    /// Returns the order side for this request type, if applicable.
     ///
-    /// Only valid for order-placing request types (OpenLong, OpenShort, CloseLong, CloseShort).
-    /// Panics for Cancel, IncreasePositionCollateral, and Change.
-    pub fn side(&self) -> OrderSide {
-        OrderType::from(*self).side()
+    /// Returns `Some(side)` for order-placing types (OpenLong, OpenShort, CloseLong, CloseShort).
+    /// Returns `None` for Cancel, IncreasePositionCollateral, and Change.
+    pub fn try_side(&self) -> Option<OrderSide> {
+        match self {
+            RequestType::OpenLong | RequestType::CloseShort => Some(OrderSide::Bid),
+            RequestType::OpenShort | RequestType::CloseLong => Some(OrderSide::Ask),
+            _ => None,
+        }
     }
 }
 

@@ -98,10 +98,13 @@ impl TradeProcessor {
         match event.event() {
             ExchangeEvents::OrderRequest(e) => {
                 let request_type: RequestType = e.orderType.into();
-                self.order_context = Some(OrderContext {
-                    account_id: e.accountId.to(),
-                    side: request_type.side(),
-                });
+                // Only track context for order types that can have fills
+                if let Some(side) = request_type.try_side() {
+                    self.order_context = Some(OrderContext {
+                        account_id: e.accountId.to(),
+                        side,
+                    });
+                }
                 None
             }
             ExchangeEvents::OrderBatchCompleted(_) => {
