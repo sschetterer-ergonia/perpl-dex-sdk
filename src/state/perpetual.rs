@@ -54,7 +54,7 @@ pub struct Perpetual {
     is_oracle_used: bool,
     price_max_age_sec: u64,
 
-    l2_book: L2Book,
+    l2_book: OrderBook,
 
     open_interest: UD128,
 }
@@ -120,7 +120,7 @@ impl Perpetual {
             is_oracle_used: !info.ignOracle,
             price_max_age_sec: info.refPriceMaxAgeSec.to(),
 
-            l2_book: L2Book::new(),
+            l2_book: OrderBook::new(),
 
             open_interest: size_converter.from_unsigned(info.longOpenInterestLNS),
         }
@@ -307,7 +307,7 @@ impl Perpetual {
     }
 
     /// Up to date L2 order book.
-    pub fn l2_book(&self) -> &L2Book {
+    pub fn l2_book(&self) -> &OrderBook {
         &self.l2_book
     }
 
