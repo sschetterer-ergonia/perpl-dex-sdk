@@ -304,7 +304,9 @@ impl Exchange {
                 .collect(),
             ExchangeEvents::ClearingExpiredOrder(e) => chain!(
                 if let Some(perp) = self.perpetual(e.perpId) {
-                    let order = perp.remove_order(e.orderId.to())?;
+                    let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                        .expect("orderId in event cannot be 0");
+                    let order = perp.remove_order(order_id)?;
                     Some(StateEvents::order(
                         perp,
                         &order,
@@ -330,7 +332,9 @@ impl Exchange {
             .collect(),
             ExchangeEvents::ClearingFrozenAccountOrder(e) => chain!(
                 if let Some(perp) = self.perpetual(e.perpId) {
-                    let order = perp.remove_order(e.orderId.to())?;
+                    let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                        .expect("orderId in event cannot be 0");
+                    let order = perp.remove_order(order_id)?;
                     Some(StateEvents::order(
                         perp,
                         &order,
@@ -356,7 +360,9 @@ impl Exchange {
             .collect(),
             ExchangeEvents::ClearingInvalidCloseOrder(e) => chain!(
                 if let Some(perp) = self.perpetual(e.perpId) {
-                    let order = perp.remove_order(e.orderId.to())?;
+                    let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                        .expect("orderId in event cannot be 0");
+                    let order = perp.remove_order(order_id)?;
                     Some(StateEvents::order(
                         perp,
                         &order,
@@ -382,7 +388,9 @@ impl Exchange {
             .collect(),
             ExchangeEvents::ClearingSelfMatchingOrder(e) => chain!(
                 if let Some(perp) = self.perpetual(e.perpId) {
-                    let order = perp.remove_order(e.orderId.to())?;
+                    let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                        .expect("orderId in event cannot be 0");
+                    let order = perp.remove_order(order_id)?;
                     Some(StateEvents::order(
                         perp,
                         &order,
@@ -700,7 +708,9 @@ impl Exchange {
             .collect(),
             ExchangeEvents::MakerOrderSettlementFailed(e) => chain!(
                 if let Some(perp) = self.perpetual(e.perpId) {
-                    let order = perp.remove_order(e.orderId.to())?;
+                    let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                        .expect("orderId in event cannot be 0");
+                    let order = perp.remove_order(order_id)?;
                     chain!(
                         Some(StateEvents::order(
                             perp,
@@ -802,9 +812,10 @@ impl Exchange {
             }
             ExchangeEvents::OrderCancelled(e) => {
                 let c = must_ctx()?;
+                let order_id = c.order_id.expect("order_id required for OrderCancelled");
                 chain!(
                     if let Some(perp) = self.perpetuals.get_mut(&c.perpetual_id) {
-                        let order = perp.remove_order(c.order_id.unwrap_or_default())?;
+                        let order = perp.remove_order(order_id)?;
                         Some(StateEvents::order(
                             perp,
                             &order,
@@ -867,9 +878,9 @@ impl Exchange {
             .collect(),
             ExchangeEvents::OrderChanged(e) => {
                 let c = must_ctx()?;
+                let order_id = c.order_id.expect("order_id required for OrderChanged");
                 chain!(
                     if let Some(perp) = self.perpetuals.get_mut(&c.perpetual_id) {
-                        let order_id = c.order_id.unwrap_or_default();
                         let order = perp
                             .get_order(order_id)
                             .copied()
@@ -944,12 +955,14 @@ impl Exchange {
             ExchangeEvents::OrderForwardingUpdated(_) => vec![],    // Ignored
             ExchangeEvents::OrderPlaced(e) => {
                 let c = must_ctx()?;
+                let order_id = std::num::NonZeroU16::new(e.orderId.to::<u16>())
+                    .expect("orderId in OrderPlaced event cannot be 0");
                 chain!(
                     if let Some(perp) = self.perpetuals.get_mut(&c.perpetual_id) {
                         let order = Order::placed(
                             instant,
                             c,
-                            e.orderId.to(),
+                            order_id,
                             perp.size_converter().from_unsigned(e.lotLNS),
                             perp.price_converter(),
                             perp.leverage_converter(),
@@ -1626,7 +1639,8 @@ impl Exchange {
         perp_id: U256,
         ord_id: U256,
     ) -> Result<Option<(&mut Perpetual, Order)>, DexError> {
-        let ord_id = ord_id.to::<types::OrderId>();
+        let ord_id = std::num::NonZeroU16::new(ord_id.to::<u16>())
+            .expect("ord_id in order lookup cannot be 0");
         Ok(
             if let Some(perp) = self.perpetuals.get_mut(&perp_id.to::<types::PerpetualId>()) {
                 let ord = perp
