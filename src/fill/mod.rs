@@ -1,8 +1,8 @@
 //! Trade listener module for streaming normalized trade events.
 //!
-//! Listens to `MakerOrderFilled` and `TakerOrderFilled` events, matches them
-//! into unified `Trade` events, normalizes fixed-point values to decimals,
-//! and streams trades batched per block.
+//! Listens to `MakerOrderFilled` and `TakerOrderFilled` events, batches all
+//! maker fills per taker into unified `TakerTrade` events, normalizes
+//! fixed-point values to decimals, and streams trades batched per block.
 //!
 //! # Architecture
 //!
@@ -11,6 +11,12 @@
 //! - [`TradeProcessor`] - Pure, synchronous trade extraction from raw events
 //! - [`NormalizationConfig`] - Configuration fetched once at startup
 //! - [`start`] - Async entry point that spawns a background listener task
+//!
+//! # Data Model
+//!
+//! Each [`TakerTrade`] represents a single taker order execution that may have
+//! matched against multiple maker orders. The `maker_fills` vector contains
+//! all individual [`MakerFill`]s that occurred as part of this trade.
 //!
 //! # Example
 //!
@@ -30,8 +36,14 @@
 //!     );
 //!
 //!     for trade in &block_trades.trades {
-//!         println!("  {} @ {} (maker={}, taker={})",
-//!             trade.size, trade.price, trade.maker_account_id, trade.taker_account_id);
+//!         println!("Taker {} {:?} on perp {} (fee: {})",
+//!             trade.taker_account_id, trade.taker_side,
+//!             trade.perpetual_id, trade.taker_fee);
+//!         for fill in &trade.maker_fills {
+//!             println!("  Maker {} order {} filled {} @ {} (fee: {})",
+//!                 fill.maker_account_id, fill.maker_order_id,
+//!                 fill.size, fill.price, fill.fee);
+//!         }
 //!     }
 //! }
 //!
@@ -43,4 +55,4 @@ mod listener;
 mod types;
 
 pub use listener::{NormalizationConfig, TradeProcessor, start};
-pub use types::{BlockTrades, Trade, TradeReceiver};
+pub use types::{BlockTrades, MakerFill, TakerTrade, TradeReceiver};

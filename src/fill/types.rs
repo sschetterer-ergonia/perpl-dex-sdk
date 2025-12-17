@@ -6,29 +6,11 @@ use tokio::sync::mpsc;
 
 use crate::types::{self, OrderSide};
 
-/// A matched trade between a taker and maker.
-///
-/// Each trade represents a single match where a taker order
-/// was executed against a maker order at a specific price and size.
+/// A single maker fill within a taker trade.
 #[derive(Clone, Debug)]
-pub struct Trade {
-    /// Transaction hash the trade occurred in.
-    pub tx_hash: TxHash,
-
-    /// Transaction index within the block.
-    pub tx_index: u64,
-
-    /// Log index of the maker fill event.
+pub struct MakerFill {
+    /// Log index of this maker fill event.
     pub log_index: u64,
-
-    /// Perpetual contract ID.
-    pub perpetual_id: types::PerpetualId,
-
-    /// Fill price (normalized decimal).
-    pub price: UD64,
-
-    /// Fill size (normalized decimal).
-    pub size: UD64,
 
     /// Maker account ID.
     pub maker_account_id: types::AccountId,
@@ -36,8 +18,31 @@ pub struct Trade {
     /// Maker order ID.
     pub maker_order_id: types::OrderId,
 
+    /// Fill price (normalized decimal).
+    pub price: UD64,
+
+    /// Fill size (normalized decimal).
+    pub size: UD64,
+
     /// Maker fee paid (normalized decimal, in collateral token).
-    pub maker_fee: UD64,
+    pub fee: UD64,
+}
+
+/// A complete trade event: one taker matched against one or more makers.
+///
+/// Each `TakerTrade` represents a single taker order execution that may have
+/// matched against multiple maker orders. The `maker_fills` vector contains
+/// all individual maker fills that occurred as part of this trade.
+#[derive(Clone, Debug)]
+pub struct TakerTrade {
+    /// Transaction hash the trade occurred in.
+    pub tx_hash: TxHash,
+
+    /// Transaction index within the block.
+    pub tx_index: u64,
+
+    /// Perpetual contract ID.
+    pub perpetual_id: types::PerpetualId,
 
     /// Taker account ID.
     pub taker_account_id: types::AccountId,
@@ -47,6 +52,9 @@ pub struct Trade {
 
     /// Taker fee paid (normalized decimal, in collateral token).
     pub taker_fee: UD64,
+
+    /// All maker fills matched by this taker order.
+    pub maker_fills: Vec<MakerFill>,
 }
 
 /// Trades from a single block.
@@ -56,11 +64,11 @@ pub struct BlockTrades {
     pub instant: types::StateInstant,
 
     /// All trades in this block.
-    pub trades: Vec<Trade>,
+    pub trades: Vec<TakerTrade>,
 }
 
 impl BlockTrades {
-    pub(crate) fn new(instant: types::StateInstant, trades: Vec<Trade>) -> Self {
+    pub(crate) fn new(instant: types::StateInstant, trades: Vec<TakerTrade>) -> Self {
         Self { instant, trades }
     }
 

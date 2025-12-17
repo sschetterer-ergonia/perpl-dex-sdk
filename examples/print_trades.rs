@@ -45,16 +45,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             for trade in &block_trades.trades {
                 println!(
-                    "  perp={} {:?} {} @ {} maker={} taker={} fees=({}, {})",
-                    trade.perpetual_id,
-                    trade.taker_side,
-                    trade.size,
-                    trade.price,
-                    trade.maker_account_id,
+                    "  Taker {} {:?} on perp={} (fee: {})",
                     trade.taker_account_id,
-                    trade.maker_fee,
+                    trade.taker_side,
+                    trade.perpetual_id,
                     trade.taker_fee,
                 );
+                for fill in &trade.maker_fills {
+                    println!(
+                        "    <- Maker {} order {} filled {} @ {} (fee: {})",
+                        fill.maker_account_id,
+                        fill.maker_order_id,
+                        fill.size,
+                        fill.price,
+                        fill.fee,
+                    );
+                }
             }
         }
     }

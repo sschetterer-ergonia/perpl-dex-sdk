@@ -6,7 +6,7 @@ use alloy::{primitives::U256, providers::Provider};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use super::types::{BlockTrades, Trade, TradeReceiver};
+use super::types::{BlockTrades, MakerFill, TakerTrade, TradeReceiver};
 use crate::{
     Chain,
     abi::dex::Exchange::{ExchangeEvents, ExchangeInstance, MakerOrderFilled},
@@ -41,7 +41,6 @@ struct OrderContext {
 /// Pending maker fill waiting for taker match.
 struct PendingMakerFill {
     tx_hash: alloy::primitives::TxHash,
-    tx_index: u64,
     log_index: u64,
     perpetual_id: types::PerpetualId,
     maker_account_id: types::AccountId,
@@ -55,7 +54,7 @@ struct PendingMakerFill {
 pub struct TradeProcessor {
     config: NormalizationConfig,
     order_context: Option<OrderContext>,
-    pending_maker_fill: Option<PendingMakerFill>,
+    pending_maker_fills: Vec<PendingMakerFill>,
     prev_tx_index: Option<u64>,
 }
 
@@ -65,7 +64,7 @@ impl TradeProcessor {
         Self {
             config,
             order_context: None,
-            pending_maker_fill: None,
+            pending_maker_fills: Vec::new(),
             prev_tx_index: None,
         }
     }
@@ -80,7 +79,7 @@ impl TradeProcessor {
             // Reset context at transaction boundary (pattern from exchange.rs)
             if self.prev_tx_index.is_some_and(|idx| idx < event.tx_index()) {
                 self.order_context.take();
-                self.pending_maker_fill.take();
+                self.pending_maker_fills.clear();
             }
 
             if let Some(trade) = self.process_event(event) {
@@ -94,7 +93,7 @@ impl TradeProcessor {
     }
 
     /// Process a single event, potentially emitting a trade.
-    fn process_event(&mut self, event: &stream::RawEvent) -> Option<Trade> {
+    fn process_event(&mut self, event: &stream::RawEvent) -> Option<TakerTrade> {
         match event.event() {
             ExchangeEvents::OrderRequest(e) => {
                 let request_type: RequestType = e.orderType.into();
@@ -109,14 +108,14 @@ impl TradeProcessor {
             }
             ExchangeEvents::OrderBatchCompleted(_) => {
                 self.order_context.take();
-                self.pending_maker_fill.take();
+                self.pending_maker_fills.clear();
                 None
             }
             ExchangeEvents::MakerOrderFilled(e) => {
                 self.handle_maker_fill(event, e);
                 None
             }
-            ExchangeEvents::TakerOrderFilled(e) => self.handle_taker_fill(e),
+            ExchangeEvents::TakerOrderFilled(e) => self.handle_taker_fill(event, e),
             _ => None,
         }
     }
@@ -124,9 +123,8 @@ impl TradeProcessor {
     fn handle_maker_fill(&mut self, event: &stream::RawEvent, e: &MakerOrderFilled) {
         let perp_id: types::PerpetualId = e.perpId.to();
         if let Some(converters) = self.config.perpetuals.get(&perp_id) {
-            self.pending_maker_fill = Some(PendingMakerFill {
+            self.pending_maker_fills.push(PendingMakerFill {
                 tx_hash: event.tx_hash(),
-                tx_index: event.tx_index(),
                 log_index: event.log_index(),
                 perpetual_id: perp_id,
                 maker_account_id: e.accountId.to(),
@@ -140,24 +138,46 @@ impl TradeProcessor {
 
     fn handle_taker_fill(
         &mut self,
+        event: &stream::RawEvent,
         e: &crate::abi::dex::Exchange::TakerOrderFilled,
-    ) -> Option<Trade> {
-        let maker = self.pending_maker_fill.take()?;
-        let ctx = self.order_context.as_ref()?;
+    ) -> Option<TakerTrade> {
+        let makers = std::mem::take(&mut self.pending_maker_fills);
+        if makers.is_empty() {
+            return None;
+        }
 
-        Some(Trade {
-            tx_hash: maker.tx_hash,
-            tx_index: maker.tx_index,
-            log_index: maker.log_index,
-            perpetual_id: maker.perpetual_id,
-            price: maker.price,
-            size: maker.size,
-            maker_account_id: maker.maker_account_id,
-            maker_order_id: maker.maker_order_id,
-            maker_fee: maker.maker_fee,
+        let ctx = self.order_context.as_ref()?;
+        let taker_tx_hash = event.tx_hash();
+
+        // Validate all maker fills have the same tx_hash as the taker fill
+        // This ensures proper correlation within the same transaction
+        if !makers.iter().all(|m| m.tx_hash == taker_tx_hash) {
+            // Data corruption: maker fills from different transaction
+            // Skip this trade to avoid incorrect correlations
+            return None;
+        }
+
+        // All makers should have the same perpetual_id (from the same order request)
+        let perpetual_id = makers.first()?.perpetual_id;
+
+        Some(TakerTrade {
+            tx_hash: taker_tx_hash,
+            tx_index: event.tx_index(),
+            perpetual_id,
             taker_account_id: ctx.account_id,
             taker_side: ctx.side,
             taker_fee: self.config.collateral_converter.from_unsigned(e.feeCNS),
+            maker_fills: makers
+                .into_iter()
+                .map(|m| MakerFill {
+                    log_index: m.log_index,
+                    maker_account_id: m.maker_account_id,
+                    maker_order_id: m.maker_order_id,
+                    price: m.price,
+                    size: m.size,
+                    fee: m.maker_fee,
+                })
+                .collect(),
         })
     }
 }
@@ -207,8 +227,12 @@ impl NormalizationConfig {
 ///
 /// while let Some(block_trades) = rx.recv().await {
 ///     for trade in &block_trades.trades {
-///         println!("Trade: {} @ {} (maker={}, taker={})",
-///             trade.size, trade.price, trade.maker_account_id, trade.taker_account_id);
+///         println!("Taker {} {:?} on perp {} (fee: {})",
+///             trade.taker_account_id, trade.taker_side,
+///             trade.perpetual_id, trade.taker_fee);
+///         for fill in &trade.maker_fills {
+///             println!("  Maker {} @ {} (fee: {})", fill.size, fill.price, fill.fee);
+///         }
 ///     }
 /// }
 /// ```
