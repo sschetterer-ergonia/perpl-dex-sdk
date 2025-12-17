@@ -14,7 +14,7 @@
 mod account;
 mod event;
 mod exchange;
-mod l2_book;
+mod l3_book;
 mod order;
 mod perpetual;
 mod position;
@@ -37,7 +37,7 @@ use std::collections::{HashMap, hash_map};
 pub use account::*;
 pub use event::*;
 pub use exchange::*;
-pub use l2_book::*;
+pub use l3_book::*;
 pub use order::*;
 pub use perpetual::*;
 pub use position::*;

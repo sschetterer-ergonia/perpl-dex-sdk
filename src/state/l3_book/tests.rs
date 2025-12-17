@@ -1,4 +1,4 @@
-//! Tests for the L2/L3 order book.
+//! Tests for the L3 order book.
 
 use std::num::NonZeroU16;
 
@@ -133,11 +133,11 @@ fn l3_level_new_is_empty() {
 }
 
 // ============================================================================
-// L2BOOK TESTS - L2 API COMPATIBILITY
+// L3BOOK TESTS - L2 API COMPATIBILITY
 // ============================================================================
 
 #[test]
-fn l2_book_add_ask_order() {
+fn l3_book_add_ask_order() {
     // Ask orders appear in asks, not bids.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 1.0, 1, 1, 1)).unwrap();
@@ -148,7 +148,7 @@ fn l2_book_add_ask_order() {
 }
 
 #[test]
-fn l2_book_add_bid_order() {
+fn l3_book_add_bid_order() {
     // Bid orders appear in bids, not asks.
     let mut book = OrderBook::new();
     book.add_order(&bid!(90, 2.0, 1, 1, 1)).unwrap();
@@ -159,7 +159,7 @@ fn l2_book_add_bid_order() {
 }
 
 #[test]
-fn l2_book_best_prices() {
+fn l3_book_best_prices() {
     // Best ask is lowest price, best bid is highest price.
     let mut book = OrderBook::new();
     book.add_order(&ask!(110, 1.0, 1, 1, 1)).unwrap();
@@ -174,7 +174,7 @@ fn l2_book_best_prices() {
 }
 
 #[test]
-fn l2_book_multiple_orders_same_price() {
+fn l3_book_multiple_orders_same_price() {
     // Multiple orders at same price: sizes aggregate, FIFO by insertion order.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 1.0, 1, 1, 1)).unwrap();
@@ -186,7 +186,7 @@ fn l2_book_multiple_orders_same_price() {
 }
 
 #[test]
-fn l2_book_ask_impact_single_level() {
+fn l3_book_ask_impact_single_level() {
     // Impact within one price level.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 5.0, 1, 1, 1)).unwrap();
@@ -197,7 +197,7 @@ fn l2_book_ask_impact_single_level() {
 }
 
 #[test]
-fn l2_book_ask_impact_multiple_levels() {
+fn l3_book_ask_impact_multiple_levels() {
     // Impact spanning multiple price levels.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 1.0, 1, 1, 1)).unwrap();
@@ -213,7 +213,7 @@ fn l2_book_ask_impact_multiple_levels() {
 }
 
 #[test]
-fn l2_book_bid_impact() {
+fn l3_book_bid_impact() {
     // Bid impact works similarly.
     let mut book = OrderBook::new();
     book.add_order(&bid!(100, 2.0, 1, 1, 1)).unwrap();
@@ -228,11 +228,11 @@ fn l2_book_bid_impact() {
 }
 
 // ============================================================================
-// L2BOOK TESTS - L3 API
+// L3BOOK TESTS - L3 API
 // ============================================================================
 
 #[test]
-fn l2_book_get_order_by_id() {
+fn l3_book_get_order_by_id() {
     // O(1) lookup by order_id via reverse index.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 1.0, 1, 42, 7)).unwrap();
@@ -241,7 +241,7 @@ fn l2_book_get_order_by_id() {
 }
 
 #[test]
-fn l2_book_ask_orders_iterator() {
+fn l3_book_ask_orders_iterator() {
     // Iterate all asks in price-time priority.
     let mut book = OrderBook::new();
     book.add_order(&ask!(110, 1.0, 1, 1, 1)).unwrap();
@@ -254,7 +254,7 @@ fn l2_book_ask_orders_iterator() {
 }
 
 #[test]
-fn l2_book_bid_orders_iterator() {
+fn l3_book_bid_orders_iterator() {
     // Iterate all bids in price-time priority (highest price first).
     let mut book = OrderBook::new();
     book.add_order(&bid!(90, 1.0, 1, 1, 1)).unwrap();
@@ -267,7 +267,7 @@ fn l2_book_bid_orders_iterator() {
 }
 
 #[test]
-fn l2_book_level_accessors() {
+fn l3_book_level_accessors() {
     // ask_level() and bid_level() return level at specific price.
     let mut book = OrderBook::new();
     book.add_order(&ask!(100, 1.0, 1, 1, 1)).unwrap();
@@ -281,11 +281,11 @@ fn l2_book_level_accessors() {
 }
 
 // ============================================================================
-// L2BOOK TESTS - MUTATIONS
+// L3BOOK TESTS - MUTATIONS
 // ============================================================================
 
 #[test]
-fn l2_book_update_order_same_price() {
+fn l3_book_update_order_same_price() {
     // Partial fill: size decreases, count unchanged, FIFO position preserved.
     let mut book = OrderBook::new();
     let order = ask!(100, 5.0, 1, 1, 1);
@@ -302,7 +302,7 @@ fn l2_book_update_order_same_price() {
 }
 
 #[test]
-fn l2_book_remove_order() {
+fn l3_book_remove_order() {
     // Remove order: level updated, empty level pruned.
     let mut book = OrderBook::new();
     let order1 = ask!(100, 2.0, 1, 1, 1);
@@ -318,7 +318,7 @@ fn l2_book_remove_order() {
 }
 
 #[test]
-fn l2_book_remove_last_order_at_level() {
+fn l3_book_remove_last_order_at_level() {
     // Removing last order at a level: level is pruned from book.
     let mut book = OrderBook::new();
     let order = ask!(100, 1.0, 1, 1, 1);
@@ -332,11 +332,11 @@ fn l2_book_remove_last_order_at_level() {
 }
 
 // ============================================================================
-// L2BOOK TESTS - MOVE TO BACK (SIZE INCREASE)
+// L3BOOK TESTS - MOVE TO BACK (SIZE INCREASE)
 // ============================================================================
 
 #[test]
-fn l2_book_move_to_back() {
+fn l3_book_move_to_back() {
     // Size increase should move order to back of queue.
     let mut book = OrderBook::new();
     let order1 = ask!(100, 1.0, 1, 1, 1);
@@ -360,7 +360,7 @@ fn l2_book_move_to_back() {
 }
 
 #[test]
-fn l2_book_move_to_back_middle_order() {
+fn l3_book_move_to_back_middle_order() {
     // Move middle order to back.
     let mut book = OrderBook::new();
     let order1 = ask!(100, 1.0, 1, 1, 1);
@@ -383,7 +383,7 @@ fn l2_book_move_to_back_middle_order() {
 // ============================================================================
 
 #[test]
-fn l2_book_empty_book_operations() {
+fn l3_book_empty_book_operations() {
     // Operations on empty book don't panic.
     let book = OrderBook::new();
 
@@ -396,7 +396,7 @@ fn l2_book_empty_book_operations() {
 }
 
 #[test]
-fn l2_book_order_id_reuse() {
+fn l3_book_order_id_reuse() {
     // Same order_id can be reused after removal (different block).
     let mut book = OrderBook::new();
     let order1 = ask!(100, 1.0, 1, 42, 1);
@@ -412,7 +412,7 @@ fn l2_book_order_id_reuse() {
 }
 
 #[test]
-fn l2_book_account_id_stored() {
+fn l3_book_account_id_stored() {
     // Account ID is correctly stored and retrievable.
     let mut book = OrderBook::new();
 
@@ -426,7 +426,7 @@ fn l2_book_account_id_stored() {
 }
 
 #[test]
-fn l2_book_remove_nonexistent() {
+fn l3_book_remove_nonexistent() {
     // Removing nonexistent order returns an error.
     let mut book = OrderBook::new();
 
@@ -439,7 +439,7 @@ fn l2_book_remove_nonexistent() {
 }
 
 #[test]
-fn l2_book_update_nonexistent() {
+fn l3_book_update_nonexistent() {
     // Updating nonexistent order returns an error.
     let mut book = OrderBook::new();
     let order = ask!(100, 1.0, 1, 99, 1);
@@ -457,7 +457,7 @@ fn l2_book_update_nonexistent() {
 // ============================================================================
 
 #[test]
-fn l2_book_error_add_duplicate_order() {
+fn l3_book_error_add_duplicate_order() {
     // Adding an order with the same ID twice returns an error.
     let mut book = OrderBook::new();
     let order = ask!(100, 1.0, 1, 42, 1);
@@ -477,7 +477,7 @@ fn l2_book_error_add_duplicate_order() {
 }
 
 #[test]
-fn l2_book_error_add_zero_size() {
+fn l3_book_error_add_zero_size() {
     // Adding an order with zero size returns an error.
     let mut book = OrderBook::new();
     let order = ask!(100, 0.0, 1, 1, 1);
@@ -491,7 +491,7 @@ fn l2_book_error_add_zero_size() {
 }
 
 #[test]
-fn l2_book_error_add_zero_price() {
+fn l3_book_error_add_zero_price() {
     // Adding an order with zero price returns an error.
     let mut book = OrderBook::new();
     let order = ask!(0, 1.0, 1, 1, 1);
@@ -505,7 +505,7 @@ fn l2_book_error_add_zero_price() {
 }
 
 #[test]
-fn l2_book_error_update_to_zero_size() {
+fn l3_book_error_update_to_zero_size() {
     // Updating an order to zero size returns an error.
     let mut book = OrderBook::new();
     let order = ask!(100, 1.0, 1, 1, 1);

@@ -65,7 +65,7 @@ pub struct Perpetual {
     is_oracle_used: bool,
     price_max_age_sec: u64,
 
-    l2_book: OrderBook,
+    l3_book: OrderBook,
 
     #[debug("{open_interest}")]
     open_interest: UD128,
@@ -132,7 +132,7 @@ impl Perpetual {
             is_oracle_used: !info.ignOracle,
             price_max_age_sec: info.refPriceMaxAgeSec.to(),
 
-            l2_book: OrderBook::new(),
+            l3_book: OrderBook::new(),
 
             open_interest: size_converter.from_unsigned(info.longOpenInterestLNS),
         }
@@ -310,17 +310,17 @@ impl Perpetual {
 
     /// Get a specific order by ID.
     pub fn get_order(&self, order_id: types::OrderId) -> Option<&Order> {
-        self.l2_book.get_order_data(order_id)
+        self.l3_book.get_order_data(order_id)
     }
 
     /// Total number of orders in the book.
     pub fn total_orders(&self) -> usize {
-        self.l2_book.total_orders()
+        self.l3_book.total_orders()
     }
 
-    /// Up to date L2 order book.
-    pub fn l2_book(&self) -> &OrderBook {
-        &self.l2_book
+    /// Up to date L3 order book.
+    pub fn l3_book(&self) -> &OrderBook {
+        &self.l3_book
     }
 
     /// Open interest in the perpetual contract.
@@ -355,7 +355,7 @@ impl Perpetual {
     }
 
     pub(crate) fn add_order(&mut self, order: Order) -> Result<(), DexError> {
-        self.l2_book.add_order(&order)?;
+        self.l3_book.add_order(&order)?;
         Ok(())
     }
 
@@ -364,39 +364,39 @@ impl Perpetual {
     /// Uses the `prev_order_id`/`next_order_id` fields from the snapshot to determine
     /// the correct queue position within each price level.
     pub(crate) fn add_orders_from_snapshot(&mut self, orders: Vec<Order>) -> Result<(), DexError> {
-        self.l2_book.add_orders_from_snapshot(&orders)?;
+        self.l3_book.add_orders_from_snapshot(&orders)?;
         Ok(())
     }
 
     pub(crate) fn update_order(&mut self, order: Order) -> Result<(), DexError> {
         let prev = self
-            .l2_book
+            .l3_book
             .get_order_data(order.order_id())
             .copied()
             .ok_or(DexError::OrderNotFound(self.id, order.order_id()))?;
 
         if prev.price() != order.price() {
             // Price changed: remove from old level, add to new level (back of queue)
-            self.l2_book.remove_order_by_id(order.order_id())?;
-            self.l2_book.add_order(&order)?;
+            self.l3_book.remove_order_by_id(order.order_id())?;
+            self.l3_book.add_order(&order)?;
         } else if order.size() > prev.size() {
             // Size INCREASED at same price: move to back of queue (loses priority)
-            self.l2_book.move_to_back(&order, &prev)?;
+            self.l3_book.move_to_back(&order, &prev)?;
         } else if prev.expiry_block() > 0
             && prev.expiry_block() < order.instant().block_number()
             && prev.expiry_block() != order.expiry_block()
         {
             // Expired order got new expiry: move to back of queue (loses priority)
-            self.l2_book.move_to_back(&order, &prev)?;
+            self.l3_book.move_to_back(&order, &prev)?;
         } else {
             // Size decreased or unchanged: keep queue position
-            self.l2_book.update_order(&order, &prev)?;
+            self.l3_book.update_order(&order, &prev)?;
         }
         Ok(())
     }
 
     pub(crate) fn remove_order(&mut self, order_id: types::OrderId) -> Result<Order, DexError> {
-        self.l2_book
+        self.l3_book
             .remove_order_by_id(order_id)
             .map_err(|_| DexError::OrderNotFound(self.id, order_id))
     }
@@ -551,7 +551,7 @@ impl Perpetual {
             oracle_feed_id: B256::ZERO,
             is_oracle_used: false,
             price_max_age_sec: 0,
-            l2_book: OrderBook::new(),
+            l3_book: OrderBook::new(),
             open_interest: UD128::ZERO,
         }
     }
@@ -598,7 +598,7 @@ mod tests {
         perp.add_order(order2).unwrap();
 
         // Verify initial FIFO order
-        let orders: Vec<_> = perp.l2_book.ask_orders().map(|o| o.order_id()).collect();
+        let orders: Vec<_> = perp.l3_book.ask_orders().map(|o| o.order_id()).collect();
         assert_eq!(orders, vec![oid(1), oid(2)], "Initial FIFO should be [1, 2]");
 
         // Now simulate time passing: we're at block 150 (order 1 is expired at block 100)
@@ -616,7 +616,7 @@ mod tests {
         perp.update_order(order1_renewed).unwrap();
 
         // Order 1 should have moved to back: FIFO is [2, 1]
-        let orders: Vec<_> = perp.l2_book.ask_orders().map(|o| o.order_id()).collect();
+        let orders: Vec<_> = perp.l3_book.ask_orders().map(|o| o.order_id()).collect();
         assert_eq!(
             orders,
             vec![oid(2), oid(1)],
@@ -666,7 +666,7 @@ mod tests {
         perp.update_order(order1_updated).unwrap();
 
         // Order 1 should keep its position: FIFO is [1, 2]
-        let orders: Vec<_> = perp.l2_book.ask_orders().map(|o| o.order_id()).collect();
+        let orders: Vec<_> = perp.l3_book.ask_orders().map(|o| o.order_id()).collect();
         assert_eq!(orders, vec![oid(1), oid(2)], "Non-expired order should keep position");
     }
 }

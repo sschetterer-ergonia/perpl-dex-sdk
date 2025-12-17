@@ -478,7 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(perp) = exchange.perpetuals().get(&args.market) {
         print_market_info(perp);
         print_book(
-            perp.l2_book(),
+            perp.l3_book(),
             args.mode,
             args.depth,
             args.orders_per_level,
@@ -526,7 +526,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     perp.oracle_price()
                                 );
                                 print_book(
-                                    perp.l2_book(),
+                                    perp.l3_book(),
                                     args.mode,
                                     args.depth,
                                     args.orders_per_level,
