@@ -24,10 +24,11 @@ use itertools::{FoldWhile, Itertools};
 
 use crate::{state::Order, types};
 
-/// L2/L3 order book with intrusive linked lists.
+/// L3 order book with intrusive linked lists.
 ///
 /// Orders are stored in a HashMap keyed by OrderId, with each price level
 /// maintaining a doubly-linked list of orders in FIFO (time-priority) order.
+/// Provides both L2 (aggregated price levels) and L3 (individual orders) views.
 #[derive(Clone, Debug, Default)]
 pub struct OrderBook {
     /// Storage for all orders, keyed by OrderId.
