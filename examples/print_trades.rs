@@ -45,9 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             for trade in &block_trades.trades {
                 println!(
-                    "  Taker {} {:?} on perp={} (fee: {})",
+                    "  Taker {} {:?} {} @ {} on perp={} (fee: {})",
                     trade.taker_account_id,
                     trade.taker_side,
+                    trade.total_size(),
+                    trade.avg_price().unwrap_or_default(),
                     trade.perpetual_id,
                     trade.taker_fee,
                 );

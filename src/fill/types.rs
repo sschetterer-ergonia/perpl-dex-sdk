@@ -57,6 +57,33 @@ pub struct TakerTrade {
     pub maker_fills: Vec<MakerFill>,
 }
 
+impl TakerTrade {
+    /// Total size filled across all makers.
+    pub fn total_size(&self) -> UD64 {
+        self.maker_fills.iter().map(|f| f.size).sum()
+    }
+
+    /// Volume-weighted average price across all maker fills.
+    ///
+    /// Returns `None` if there are no fills.
+    pub fn avg_price(&self) -> Option<UD64> {
+        if self.maker_fills.is_empty() {
+            return None;
+        }
+        let total_value: UD64 = self.maker_fills.iter().map(|f| f.price * f.size).sum();
+        let total_size = self.total_size();
+        if total_size == UD64::ZERO {
+            return None;
+        }
+        Some(total_value / total_size)
+    }
+
+    /// Total maker fees paid across all fills.
+    pub fn total_maker_fees(&self) -> UD64 {
+        self.maker_fills.iter().map(|f| f.fee).sum()
+    }
+}
+
 /// Trades from a single block.
 #[derive(Clone, Debug)]
 pub struct BlockTrades {
