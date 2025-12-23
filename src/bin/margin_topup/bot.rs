@@ -166,8 +166,18 @@ impl MarginTopUpBot {
 
     /// Evaluate all positions and execute a top-up if needed.
     async fn evaluate_and_topup(&self, exchange: &Exchange) {
+        let Some(account_id) = self.account_id else {
+            warn!("Account not initialized, skipping evaluation");
+            return;
+        };
+
+        let Some(account) = exchange.accounts().get(&account_id) else {
+            warn!(%account_id, "Account not found in exchange state");
+            return;
+        };
+
         // Get evaluation summary for logging
-        let summary = margin::strategy::evaluate_all(exchange.accounts(), &self.config);
+        let summary = margin::strategy::evaluate_all(account, &self.config);
 
         // Log summary
         if summary.over_leveraged_count > 0 {
@@ -206,7 +216,7 @@ impl MarginTopUpBot {
         }
 
         // Compute the single top-up action (if any)
-        let action = margin::strategy::compute_topup(exchange.accounts(), &self.config);
+        let action = margin::strategy::compute_topup(account, &self.config);
 
         if let Some(action) = action {
             info!(
