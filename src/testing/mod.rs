@@ -1,10 +1,13 @@
-//! Local Anvil-based testing environment.
+//! Local Anvil-based testing environment and test utilities.
 //!
 //! [`TestExchange`] spins up Anvil instance with collateral token and exchange smart contracts deployed and
 //! provides convenience methods for perpetual contracts setup and account creation.
 //!
 //! [`TestPerp`] then can be used to configure perpetual contracts and post orders, while [`TestAccount`] provides
 //! basic information about exchange account.
+//!
+//! [`PositionBuilder`] provides a convenient way to create test Position instances with controlled values
+//! for unit testing margin and leverage calculations.
 //!
 
 use std::{sync::Arc, time::Duration};
@@ -24,8 +27,11 @@ use crate::{
     Chain,
     abi::{dex::Exchange, erc1967_proxy::ERC1967Proxy, testing::TestToken},
     error::DexError,
-    num, types,
+    num,
+    state::{Position, PositionType},
+    types::{self, StateInstant},
 };
+use fastnum::D256;
 
 const CHAIN_ID: u64 = 1337;
 const BLOCK_TIME_SEC: f64 = 0.45;
@@ -570,4 +576,444 @@ pub fn scale(amount: u64, decimals: u8) -> U256 {
 
 pub fn usd(amount: u64) -> U256 {
     scale(amount, USD_DECIMALS)
+}
+
+/// Builder for creating test Position instances with controlled values.
+///
+/// # Example
+///
+/// ```ignore
+/// use dex_sdk::testing::PositionBuilder;
+/// use fastnum::{udec64, udec128, dec256};
+///
+/// let position = PositionBuilder::new()
+///     .entry_price(udec64!(50000))
+///     .size(udec64!(0.1))
+///     .deposit(udec128!(500))
+///     .delta_pnl(dec256!(-200))
+///     .build();
+/// ```
+#[derive(Clone, Debug)]
+pub struct PositionBuilder {
+    perpetual_id: u32,
+    account_id: u32,
+    position_type: PositionType,
+    entry_price: UD64,
+    size: UD64,
+    deposit: UD128,
+    maintenance_margin: UD64,
+    target_delta_pnl: D256,
+    target_premium_pnl: D256,
+}
+
+impl Default for PositionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PositionBuilder {
+    /// Create a new position builder with default values.
+    pub fn new() -> Self {
+        Self {
+            perpetual_id: 1,
+            account_id: 1,
+            position_type: PositionType::Long,
+            entry_price: UD64::ONE,
+            size: UD64::ONE,
+            deposit: UD128::ZERO,
+            maintenance_margin: UD64::ONE,
+            target_delta_pnl: D256::ZERO,
+            target_premium_pnl: D256::ZERO,
+        }
+    }
+
+    /// Set the perpetual ID.
+    pub fn perpetual_id(mut self, id: u32) -> Self {
+        self.perpetual_id = id;
+        self
+    }
+
+    /// Set the account ID.
+    pub fn account_id(mut self, id: u32) -> Self {
+        self.account_id = id;
+        self
+    }
+
+    /// Set the position type (Long or Short).
+    pub fn position_type(mut self, pos_type: PositionType) -> Self {
+        self.position_type = pos_type;
+        self
+    }
+
+    /// Set the entry price.
+    pub fn entry_price(mut self, price: UD64) -> Self {
+        self.entry_price = price;
+        self
+    }
+
+    /// Set the position size.
+    pub fn size(mut self, size: UD64) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Set the deposit (collateral locked in position).
+    pub fn deposit(mut self, deposit: UD128) -> Self {
+        self.deposit = deposit;
+        self
+    }
+
+    /// Set the maintenance margin fraction.
+    pub fn maintenance_margin(mut self, mm: UD64) -> Self {
+        self.maintenance_margin = mm;
+        self
+    }
+
+    /// Set the target delta PnL (unrealized price-based PnL).
+    ///
+    /// The builder will compute the appropriate mark price to achieve this PnL.
+    pub fn delta_pnl(mut self, pnl: D256) -> Self {
+        self.target_delta_pnl = pnl;
+        self
+    }
+
+    /// Set the target premium PnL (unrealized funding PnL).
+    ///
+    /// The builder will apply the appropriate funding payment to achieve this PnL.
+    pub fn premium_pnl(mut self, pnl: D256) -> Self {
+        self.target_premium_pnl = pnl;
+        self
+    }
+
+    /// Build the position with the configured values.
+    pub fn build(self) -> Position {
+        let instant = StateInstant::default();
+
+        let mut pos = Position::opened(
+            instant,
+            self.perpetual_id,
+            self.account_id,
+            self.position_type,
+            self.entry_price,
+            self.size,
+            self.deposit,
+            self.maintenance_margin,
+        );
+
+        // Apply mark price to set delta_pnl if needed
+        if self.target_delta_pnl != D256::ZERO {
+            // For long: delta_pnl = (mark_price - entry_price) * size
+            // For short: delta_pnl = (entry_price - mark_price) * size
+            // Solving for mark_price:
+            // Long: mark_price = entry_price + delta_pnl / size
+            // Short: mark_price = entry_price - delta_pnl / size
+            let size_signed = self.size.to_signed().resize();
+            let entry_signed = self.entry_price.to_signed();
+
+            let mark_price = if self.position_type.is_long() {
+                let offset = self.target_delta_pnl / size_signed;
+                (entry_signed + offset.resize()).unsigned_abs()
+            } else {
+                let offset = self.target_delta_pnl / size_signed;
+                (entry_signed - offset.resize()).unsigned_abs()
+            };
+
+            pos.apply_mark_price(StateInstant::new(1, 1), mark_price);
+        }
+
+        // Apply funding to set premium_pnl if needed
+        if self.target_premium_pnl != D256::ZERO {
+            // For long: premium_pnl = -1 * payment_per_unit * size
+            // For short: premium_pnl = payment_per_unit * size
+            // Solving for payment_per_unit:
+            // Long: payment = -premium_pnl / size
+            // Short: payment = premium_pnl / size
+            let size_signed = self.size.to_signed().resize();
+
+            let payment = if self.position_type.is_long() {
+                (D256::ONE.neg() * self.target_premium_pnl) / size_signed
+            } else {
+                self.target_premium_pnl / size_signed
+            };
+
+            pos.apply_funding_payment(StateInstant::new(2, 2), payment);
+        }
+
+        pos
+    }
+}
+
+/// Builder for creating test Account instances with controlled values.
+///
+/// # Example
+///
+/// ```ignore
+/// use dex_sdk::testing::{AccountBuilder, PositionBuilder};
+/// use fastnum::{udec64, udec128};
+///
+/// let position = PositionBuilder::new()
+///     .perpetual_id(1)
+///     .entry_price(udec64!(100))
+///     .size(udec64!(10))
+///     .deposit(udec128!(100))
+///     .build();
+///
+/// let account = AccountBuilder::new()
+///     .id(1)
+///     .balance(udec128!(500))
+///     .position(position)
+///     .build();
+/// ```
+#[derive(Clone, Debug)]
+pub struct AccountBuilder {
+    id: types::AccountId,
+    address: Address,
+    balance: UD128,
+    locked_balance: UD128,
+    positions: std::collections::HashMap<types::PerpetualId, Position>,
+}
+
+impl Default for AccountBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AccountBuilder {
+    /// Create a new account builder with default values.
+    pub fn new() -> Self {
+        Self {
+            id: 1,
+            address: Address::ZERO,
+            balance: UD128::ZERO,
+            locked_balance: UD128::ZERO,
+            positions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set the account ID.
+    pub fn id(mut self, id: types::AccountId) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Set the account address.
+    pub fn address(mut self, address: Address) -> Self {
+        self.address = address;
+        self
+    }
+
+    /// Set the free balance (available for top-ups).
+    pub fn balance(mut self, balance: UD128) -> Self {
+        self.balance = balance;
+        self
+    }
+
+    /// Set the locked balance (locked by open orders).
+    pub fn locked_balance(mut self, locked_balance: UD128) -> Self {
+        self.locked_balance = locked_balance;
+        self
+    }
+
+    /// Add a position to the account.
+    pub fn position(mut self, position: Position) -> Self {
+        self.positions.insert(position.perpetual_id(), position);
+        self
+    }
+
+    /// Build the account with the configured values.
+    ///
+    /// Note: This uses internal SDK methods. Balance is set via update_balance.
+    pub fn build(self) -> crate::state::Account {
+        let instant = StateInstant::default();
+
+        // Start with an account from a position (or empty)
+        let mut account = if let Some(first_pos) = self.positions.values().next().cloned() {
+            crate::state::Account::from_position(instant, first_pos)
+        } else {
+            crate::state::Account::from_event(instant, self.id, self.address)
+        };
+
+        // Add remaining positions
+        for (perp_id, pos) in self.positions {
+            account.positions_mut().insert(perp_id, pos);
+        }
+
+        // Set balance and locked_balance
+        account.update_balance(instant, self.balance);
+        account.update_locked_balance(instant, self.locked_balance);
+
+        account
+    }
+}
+
+#[cfg(test)]
+mod account_builder_tests {
+    use super::*;
+    use fastnum::{udec64, udec128};
+
+    #[test]
+    fn test_account_builder_empty() {
+        let account = AccountBuilder::new().build();
+        assert_eq!(account.id(), 1);
+        assert_eq!(account.balance(), UD128::ZERO);
+        assert!(account.positions().is_empty());
+    }
+
+    #[test]
+    fn test_account_builder_with_balance() {
+        let account = AccountBuilder::new()
+            .id(42)
+            .balance(udec128!(1000))
+            .build();
+
+        assert_eq!(account.id(), 42);
+        assert_eq!(account.balance(), udec128!(1000));
+    }
+
+    #[test]
+    fn test_account_builder_with_position() {
+        let position = PositionBuilder::new()
+            .perpetual_id(1)
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .build();
+
+        let account = AccountBuilder::new()
+            .id(1)
+            .balance(udec128!(200))
+            .position(position)
+            .build();
+
+        assert_eq!(account.id(), 1);
+        assert_eq!(account.balance(), udec128!(200));
+        assert_eq!(account.positions().len(), 1);
+
+        let pos = account.positions().get(&1).unwrap();
+        assert_eq!(pos.entry_price(), udec64!(100));
+        assert_eq!(pos.size(), udec64!(10));
+        assert_eq!(pos.deposit(), udec128!(500));
+    }
+
+    #[test]
+    fn test_account_builder_with_multiple_positions() {
+        let pos1 = PositionBuilder::new()
+            .perpetual_id(1)
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .build();
+
+        let pos2 = PositionBuilder::new()
+            .perpetual_id(2)
+            .entry_price(udec64!(200))
+            .size(udec64!(5))
+            .deposit(udec128!(300))
+            .build();
+
+        let account = AccountBuilder::new()
+            .position(pos1)
+            .position(pos2)
+            .balance(udec128!(1000))
+            .build();
+
+        assert_eq!(account.positions().len(), 2);
+        assert!(account.positions().contains_key(&1));
+        assert!(account.positions().contains_key(&2));
+    }
+}
+
+#[cfg(test)]
+mod position_builder_tests {
+    use super::*;
+    use fastnum::{dec256, udec64, udec128};
+
+    #[test]
+    fn test_builder_defaults() {
+        let pos = PositionBuilder::new().build();
+        assert_eq!(pos.perpetual_id(), 1);
+        assert_eq!(pos.account_id(), 1);
+        assert!(pos.r#type().is_long());
+    }
+
+    #[test]
+    fn test_builder_with_deposit_only() {
+        let pos = PositionBuilder::new()
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .build();
+
+        assert_eq!(pos.entry_price(), udec64!(100));
+        assert_eq!(pos.size(), udec64!(10));
+        assert_eq!(pos.deposit(), udec128!(500));
+        assert_eq!(pos.delta_pnl(), D256::ZERO);
+        assert_eq!(pos.premium_pnl(), D256::ZERO);
+    }
+
+    #[test]
+    fn test_builder_with_positive_delta_pnl_long() {
+        let pos = PositionBuilder::new()
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .delta_pnl(dec256!(200))
+            .build();
+
+        assert_eq!(pos.delta_pnl(), dec256!(200));
+    }
+
+    #[test]
+    fn test_builder_with_negative_delta_pnl_long() {
+        let pos = PositionBuilder::new()
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .delta_pnl(dec256!(-200))
+            .build();
+
+        assert_eq!(pos.delta_pnl(), dec256!(-200));
+    }
+
+    #[test]
+    fn test_builder_with_premium_pnl_long() {
+        let pos = PositionBuilder::new()
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .premium_pnl(dec256!(-50))
+            .build();
+
+        assert_eq!(pos.premium_pnl(), dec256!(-50));
+    }
+
+    #[test]
+    fn test_builder_with_all_pnl_components() {
+        let pos = PositionBuilder::new()
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .delta_pnl(dec256!(100))
+            .premium_pnl(dec256!(-30))
+            .build();
+
+        assert_eq!(pos.delta_pnl(), dec256!(100));
+        assert_eq!(pos.premium_pnl(), dec256!(-30));
+    }
+
+    #[test]
+    fn test_builder_short_position() {
+        let pos = PositionBuilder::new()
+            .position_type(PositionType::Short)
+            .entry_price(udec64!(100))
+            .size(udec64!(10))
+            .deposit(udec128!(500))
+            .delta_pnl(dec256!(200)) // Price went down, profit for short
+            .build();
+
+        assert!(pos.r#type().is_short());
+        assert_eq!(pos.delta_pnl(), dec256!(200));
+    }
 }
