@@ -74,6 +74,10 @@ pub struct CliConfig {
     /// Minimum balance to keep in reserve (not used for top-ups)
     #[arg(long, default_value = "0")]
     pub min_reserve_balance: String,
+
+    /// Dry-run mode: print what would be done without executing transactions
+    #[arg(long, default_value = "false")]
+    pub dry_run: bool,
 }
 
 impl CliConfig {
@@ -138,6 +142,7 @@ mod tests {
             target_leverage: "10".to_string(),
             perpetual_ids: vec![1, 2],
             min_reserve_balance: "100".to_string(),
+            dry_run: false,
         };
 
         let config = cli.to_topup_config().unwrap();
@@ -153,6 +158,7 @@ mod tests {
             target_leverage: "15".to_string(),
             perpetual_ids: vec![],
             min_reserve_balance: "0".to_string(),
+            dry_run: false,
         };
 
         assert!(matches!(
@@ -168,6 +174,7 @@ mod tests {
             target_leverage: "0".to_string(),
             perpetual_ids: vec![],
             min_reserve_balance: "0".to_string(),
+            dry_run: false,
         };
 
         assert!(matches!(

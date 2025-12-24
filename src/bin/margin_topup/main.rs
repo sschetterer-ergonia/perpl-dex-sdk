@@ -119,7 +119,15 @@ async fn main() {
     let timeout = Duration::from_secs(env_config.timeout_seconds.unwrap_or(30));
 
     // Create and run the bot
-    let mut bot = match MarginTopUpBot::try_new(node_url, wallet, chain, topup_config, timeout).await
+    let mut bot = match MarginTopUpBot::try_new(
+        node_url,
+        wallet,
+        chain,
+        topup_config,
+        timeout,
+        cli_config.dry_run,
+    )
+    .await
     {
         Ok(bot) => bot,
         Err(e) => {

@@ -38,6 +38,7 @@ pub struct MarginTopUpBot {
     timeout: Duration,
     post_tx_delay: Duration,
     account_id: Option<AccountId>,
+    dry_run: bool,
 }
 
 impl MarginTopUpBot {
@@ -48,6 +49,7 @@ impl MarginTopUpBot {
         chain: Chain,
         config: TopUpConfig,
         timeout: Duration,
+        dry_run: bool,
     ) -> Result<Self> {
         let wallet_address = wallet.default_signer().address();
         info!(
@@ -55,6 +57,7 @@ impl MarginTopUpBot {
             trigger_leverage = %config.trigger_leverage,
             target_leverage = %config.target_leverage,
             perpetual_ids = ?config.perpetual_ids,
+            dry_run,
             "Initializing Margin Top-Up Bot"
         );
 
@@ -76,6 +79,7 @@ impl MarginTopUpBot {
             timeout,
             post_tx_delay: Duration::from_secs(2),
             account_id: None,
+            dry_run,
         })
     }
 
@@ -219,25 +223,35 @@ impl MarginTopUpBot {
         let action = margin::strategy::compute_topup(account, &self.config);
 
         if let Some(action) = action {
-            info!(
-                perpetual_id = %action.perpetual_id,
-                amount = %action.amount,
-                current_leverage = %action.current_leverage,
-                target_leverage = %action.target_leverage,
-                "Executing top-up"
-            );
-
-            if let Err(e) = self.execute_topup(exchange, &action).await {
-                error!(?e, "Failed to execute top-up");
+            if self.dry_run {
+                info!(
+                    perpetual_id = %action.perpetual_id,
+                    amount = %action.amount,
+                    current_leverage = %action.current_leverage,
+                    target_leverage = %action.target_leverage,
+                    "[DRY-RUN] Would execute top-up"
+                );
             } else {
                 info!(
                     perpetual_id = %action.perpetual_id,
                     amount = %action.amount,
-                    "Top-up transaction submitted successfully"
+                    current_leverage = %action.current_leverage,
+                    target_leverage = %action.target_leverage,
+                    "Executing top-up"
                 );
 
-                // Wait for event stream to catch up
-                tokio::time::sleep(self.post_tx_delay).await;
+                if let Err(e) = self.execute_topup(exchange, &action).await {
+                    error!(?e, "Failed to execute top-up");
+                } else {
+                    info!(
+                        perpetual_id = %action.perpetual_id,
+                        amount = %action.amount,
+                        "Top-up transaction submitted successfully"
+                    );
+
+                    // Wait for event stream to catch up
+                    tokio::time::sleep(self.post_tx_delay).await;
+                }
             }
         }
     }
