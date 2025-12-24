@@ -21,13 +21,13 @@ use super::types::{EvaluationSummary, PositionMarginInfo, TopUpAction, TopUpConf
 /// 1. Collect positions from the account
 /// 2. Calculate leverage for each position
 /// 3. Filter to over-leveraged positions (current_leverage > trigger_leverage)
-/// 4. Sort by leverage descending (most leveraged first)
-/// 5. Return top-up for the most leveraged position using available capital
+/// 4. Sort by required top-up amount descending (largest need first)
+/// 5. Return top-up for the position needing most capital
 ///
-/// Note: We use a greedy approach - put all available capital into the most
-/// leveraged position, even if it's not enough to reach target leverage.
-/// A more sophisticated approach could minimize the max leverage across all
-/// positions, but greedy is simpler and works well in practice.
+/// Note: We use a greedy approach - put all available capital into the position
+/// that needs the most, even if it's not enough to reach target leverage.
+/// Sorting by top-up amount (rather than leverage) prioritizes positions that
+/// are furthest from their target in absolute capital terms.
 ///
 /// This function does NO IO, NO logging - pure computation only.
 pub fn compute_topup(account: &Account, config: &TopUpConfig) -> Option<TopUpAction> {
@@ -37,31 +37,34 @@ pub fn compute_topup(account: &Account, config: &TopUpConfig) -> Option<TopUpAct
         return None;
     }
 
-    // Collect positions with their leverage, filtering to monitored perpetuals
-    let mut positions_with_leverage: Vec<(&Position, UD64)> = account
+    // Collect over-leveraged positions with their leverage and required top-up
+    let mut candidates: Vec<(&Position, UD64, UD128)> = account
         .positions()
         .values()
         .filter(|pos| {
             config.perpetual_ids.is_empty() || config.perpetual_ids.contains(&pos.perpetual_id())
         })
-        .filter_map(|pos| calc::current_leverage(pos).map(|lev| (pos, lev)))
-        .filter(|(_, lev)| *lev > config.trigger_leverage)
+        .filter_map(|pos| {
+            let leverage = calc::current_leverage(pos)?;
+            if leverage <= config.trigger_leverage {
+                return None;
+            }
+            let required = calc::required_topup_amount(pos, config.target_leverage)?;
+            Some((pos, leverage, required))
+        })
         .collect();
 
-    if positions_with_leverage.is_empty() {
+    if candidates.is_empty() {
         return None;
     }
 
-    // Sort by leverage descending (most leveraged first)
-    positions_with_leverage.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+    // Sort by required top-up amount descending (largest need first)
+    candidates.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Take the most leveraged position and top it up with whatever we have
-    let (position, current_leverage) = positions_with_leverage[0];
-
-    // Calculate ideal top-up amount to reach target
-    let ideal_amount = calc::required_topup_amount(position, config.target_leverage)?;
+    // Take the position needing most capital and top it up with whatever we have
+    let (position, current_leverage, ideal_amount) = candidates[0];
 
     // Use min of ideal amount and available capital (partial top-up is fine)
     let amount = if ideal_amount <= available_capital {
@@ -326,8 +329,9 @@ mod tests {
     // ==================== Multiple positions - prioritization ====================
 
     #[test]
-    fn test_multiple_positions_most_leveraged_first() {
-        // Position 1: 20x leverage (needs 50)
+    fn test_multiple_positions_largest_topup_needed_first() {
+        // Position 1: 20x leverage, needs 50 to reach 10x
+        // notional = 1000, equity = 50, target_equity = 100, topup = 50
         let pos1 = PositionBuilder::new()
             .perpetual_id(1)
             .entry_price(udec64!(100))
@@ -335,7 +339,8 @@ mod tests {
             .deposit(udec128!(50))
             .build();
 
-        // Position 2: 25x leverage (needs more - should be first)
+        // Position 2: 25x leverage, needs 60 to reach 10x
+        // notional = 1000, equity = 40, target_equity = 100, topup = 60
         let pos2 = PositionBuilder::new()
             .perpetual_id(2)
             .entry_price(udec64!(100))
@@ -355,12 +360,13 @@ mod tests {
 
         assert!(action.is_some());
         let action = action.unwrap();
-        // Position 2 is more leveraged (25x > 20x), should be processed first
+        // Position 2 needs more top-up (60 > 50), should be processed first
         assert_eq!(action.perpetual_id, 2);
+        assert_eq!(action.amount, udec128!(60));
     }
 
     #[test]
-    fn test_multiple_positions_greedy_into_most_leveraged() {
+    fn test_multiple_positions_greedy_into_largest_need() {
         // Position 1: Very leveraged (50x), needs 400 to reach 10x
         // notional = 5000, equity = 100, target_equity = 500, topup = 400
         let pos1 = PositionBuilder::new()
@@ -390,8 +396,7 @@ mod tests {
 
         assert!(action.is_some());
         let action = action.unwrap();
-        // Should put all 100 into the most leveraged position (pos1)
-        // even though it won't reach target
+        // Position 1 needs more (400 > 50), so gets all available capital
         assert_eq!(action.perpetual_id, 1);
         assert_eq!(action.amount, udec128!(100));
     }
